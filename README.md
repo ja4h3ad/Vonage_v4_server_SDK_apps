@@ -77,8 +77,8 @@ VONAGE_NUMBER=your_vonage_phone_number
 # Webhook Configuration  
 WEBHOOK_BASE_URL=https://your-ngrok-url.ngrok-free.app
 
-# Test Configuration
-TEST_LOOP=[19726722984,15551234567]
+# Test Configuration - must be valid e164 formatted numbers
+TEST_LOOP=[12145551212,15551234567]
 ```
 
 ### 4. Vonage Application Setup
@@ -169,7 +169,7 @@ uvicorn outbound_with_amd_asr_dtmf:app --host 0.0.0.0 --port 5003 --workers 4
 1. Call initiated → with Advanced Machine Detection 
 ``` 
 
-### Call Screener navigation
+#### Call Screener navigation
 ```
 1. Play call screener message if machine detected → for GoogleFi an iOS 26 phones with screening service
 ```
