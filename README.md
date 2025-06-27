@@ -115,7 +115,7 @@ TEST_LOOP=[12145551212,15551234567]
 ```python
 advanced_machine_detection={
     'behavior': 'continue',    # Continue call after detection
-    'mode': 'default',         # Detection sensitivity
+    'mode': 'default',         # mode provides the highest level of control to the call. This mode works asynchronously, which means Vonage starts processing NCCO actions during the detection phase
     'beep_timeout': 45         # Seconds to wait for voicemail beep
 }
 ```
