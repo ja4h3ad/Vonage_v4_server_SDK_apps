@@ -1,5 +1,19 @@
+"""
+Vonage Voice API Outbound Calling Application
+
+This application demonstrates advanced voice features including:
+- Outbound call automation with retry logic
+- Advanced Machine Detection (AMD)
+- Automatic Speech Recognition (ASR)
+- DTMF input handling
+- Call recording with automatic download
+- Interactive Voice Response (IVR) system
+
+Built with Vonage SDK v4, FastAPI, and Python 3.12+
+"""
+
 from vonage import Vonage, Auth
-from vonage_voice import CreateCallRequest, Talk, Record, Input
+from vonage_voice import CreateCallRequest
 from vonage_http_client import AuthenticationError, HttpRequestError
 from dotenv import load_dotenv
 
@@ -19,73 +33,108 @@ from urllib.parse import urlparse, urljoin
 
 from vonage_voice.models import ncco
 
-# queue the file for audio downloads
+# Initialize queues for asynchronous file downloads
 download_queue = queue.Queue()
-# retry any failed downloads
 failed_downloads = queue.Queue()
-# load environment variables
+
+# Load environment variables from .env file
 dotenv_path = join(dirname(__file__), '.env')
 load_dotenv(dotenv_path)
 
+# Configuration from environment variables
 VONAGE_APPLICATION_ID = os.getenv('VONAGE_APPLICATION_ID')
 VONAGE_PRIVATE_KEY = os.getenv('VONAGE_APPLICATION_PRIVATE_KEY_PATH')
 VONAGE_NUMBER = os.getenv('VONAGE_NUMBER')
 WEBHOOK_BASE_URL = os.getenv('WEBHOOK_BASE_URL')
-TEST_LOOP = eval(os.getenv('TEST_LOOP', "['1', '2', '3']")) # convert the strings to a list
+TEST_LOOP = [str(num) for num in eval(os.getenv('TEST_LOOP', "['1', '2', '3']"))]
 
-# Initialize the Vonage server object
+# Initialize Vonage client with application-based authentication
 auth = Auth(application_id=VONAGE_APPLICATION_ID, private_key=VONAGE_PRIVATE_KEY)
 vonage = Vonage(auth)
-app = FastAPI()
 
-# helper function to get webhook URLs
+# Initialize FastAPI application
+app = FastAPI(title="Vonage Voice API Demo", version="1.0.0")
+
+
 def get_webhook_url(endpoint):
-    '''
+    """
+    Construct full webhook URL from base URL and endpoint
 
-    :param endpoint:
-    :return: full webhook UR from base URL and endpoint
-    '''
+    Args:
+        endpoint (str): The webhook endpoint path
+
+    Returns:
+        str: Complete webhook URL
+    """
     return urljoin(WEBHOOK_BASE_URL, endpoint)
 
+
 def download_recording(recording_url, conversation_uuid, max_retries=5, initial_delay=1):
+    """
+    Download call recording from Vonage with exponential backoff retry logic
+
+    Args:
+        recording_url (str): URL of the recording to download
+        conversation_uuid (str): Unique conversation identifier
+        max_retries (int): Maximum number of retry attempts
+        initial_delay (int): Initial delay between retries in seconds
+
+    Returns:
+        bool: True if download successful, False otherwise
+    """
     for attempt in range(max_retries):
         try:
-            response=vonage.voice.download_recording(recording_url)
+            # Create recordings directory if it doesn't exist
             recordings_dir = 'recordings'
-            os.makedirs(recordings_dir, exist_ok=True) # create the directory if not already created
+            os.makedirs(recordings_dir, exist_ok=True)
+
+            # Parse URL to determine file extension
             parsed_url = urlparse(recording_url)
             file_extension = os.path.splitext(parsed_url.path)[1]
             if not file_extension:
-                file_extension = '.wav' # automatically creates a .wav file if the file does not come with extension
+                file_extension = '.wav'
 
-            filename = f"recording_{conversation_uuid}.{file_extension}" # name file according to Conversation ID
+            # Generate filename using conversation UUID
+            filename = f"recording_{conversation_uuid}{file_extension}"
             file_path = os.path.join(recordings_dir, filename)
-            with open(file_path, 'wb') as f:
-                f.write(response)
 
-            file_size = os.path.getsize(file_path)
-            print(f"Recording saved as {file_path} (Size: {file_size} bytes)")
-            if file_size > 1024:
-                return True
+            # Download recording using Vonage SDK v4
+            vonage.voice.download_recording(recording_url, file_path)
+
+            # Verify download was successful
+            if os.path.exists(file_path):
+                file_size = os.path.getsize(file_path)
+                print(f"Recording saved as {file_path} (Size: {file_size} bytes)")
+                if file_size > 1024:  # Minimum file size check
+                    return True
+                else:
+                    print(f"Recording file seems too small. Retrying...")
             else:
-                print(f"Recording file seems to small.  Retrying...")
+                print(f"Recording file was not created. Retrying...")
 
         except AuthenticationError as e:
-            print(f"Authentication error for conversation {conversation_uuid} {str(e)} ...")
+            print(f"Authentication error for conversation {conversation_uuid}: {str(e)}")
             return False
         except Exception as e:
-            print(f"Failed to download recoring.  Error:  {str(e)}")
+            print(f"Failed to download recording. Error: {str(e)}")
             if attempt < max_retries - 1:
+                # Exponential backoff delay
                 delay = initial_delay * (2 ** attempt)
-                print (f"Retrying in {delay} seconds...")
+                print(f"Retrying in {delay} seconds...")
                 time.sleep(delay)
             else:
-                print(f"Failed to download recording for conversation {conversation_uuid} after {max_retries} attempts.")
+                print(
+                    f"Failed to download recording for conversation {conversation_uuid} after {max_retries} attempts.")
                 return False
 
     return False
 
+
 def download_worker():
+    """
+    Background worker thread for processing recording download queue
+    Continuously processes download tasks until poison pill received
+    """
     while True:
         try:
             item = download_queue.get()
@@ -104,9 +153,16 @@ def download_worker():
 
 
 def retry_failed_downloads(max_retries=2):
+    """
+    Retry all failed download attempts
+
+    Args:
+        max_retries (int): Maximum retry attempts for failed downloads
+    """
     print("Retrying failed downloads...")
     retry_queue = queue.Queue()
 
+    # Process all failed downloads
     while not failed_downloads.empty():
         recording_url, conversation_uuid = failed_downloads.get()
         success = download_recording(recording_url, conversation_uuid)
@@ -114,20 +170,26 @@ def retry_failed_downloads(max_retries=2):
             retry_queue.put((recording_url, conversation_uuid))
         failed_downloads.task_done()
 
-    # Handle items that failed retry
+    # Report permanently failed downloads
     while not retry_queue.empty():
         recording_url, conversation_uuid = retry_queue.get()
         print(f'Failed to download recording for conversation {conversation_uuid} after retries')
 
-threading.Thread(target=download_worker, daemon=True).start()
-
 
 def make_call(to_number, max_retries=5, initial_delay=1):
+    """
+    Initiate outbound call with Advanced Machine Detection and recording
+
+    Args:
+        to_number (str): Phone number to call
+        max_retries (int): Maximum retry attempts for failed calls
+        initial_delay (int): Initial delay between retries in seconds
+    """
     for attempt in range(max_retries):
         try:
             print(f'Calling {to_number}...')
 
-            # Create the call request object
+            # Create call request with comprehensive configuration
             call_request = CreateCallRequest(
                 to=[{'type': 'phone', 'number': to_number}],
                 from_={'type': 'phone', 'number': VONAGE_NUMBER},
@@ -136,7 +198,7 @@ def make_call(to_number, max_retries=5, initial_delay=1):
                     {
                         'action': 'record',
                         'eventUrl': [get_webhook_url('recording')],
-                        'split': 'conversation',
+                        'split': 'conversation',  # Record both channels separately
                         'channels': 2,
                         'public': True,
                         'validity_time': 30,
@@ -144,15 +206,15 @@ def make_call(to_number, max_retries=5, initial_delay=1):
                     }
                 ],
                 advanced_machine_detection={
-                    'behavior': 'continue',
+                    'behavior': 'continue',  # Continue call flow after detection
                     'mode': 'default',
-                    'beep_timeout': 45
+                    'beep_timeout': 45  # Wait 45 seconds for voicemail beep
                 },
                 event_url=[get_webhook_url('event')],
                 event_method='POST'
             )
 
-            # Make the call using the request object
+            # Execute call
             response = vonage.voice.create_call(call_request)
             pprint(response.model_dump())
             return
@@ -166,32 +228,36 @@ def make_call(to_number, max_retries=5, initial_delay=1):
             else:
                 print(f'Failed to create call for {to_number} after {max_retries} attempts.')
 
-# webhook handlers using FastAPI to match Pydantic structures of Vonage SDK
+
+# Start download worker thread
+threading.Thread(target=download_worker, daemon=True).start()
+
 
 @app.post("/dtmf_input")
 async def dtmf_input_webhook(request: Request):
+    """
+    Handle DTMF and speech input from callers during IVR interactions
+    Processes both keypad input and voice commands
+    """
     data = await request.json()
-    print("Full input webhook data:", json.dumps(data, indent=2))  # Fixed typo
+    print("Full input webhook data:", json.dumps(data, indent=2))
 
     conversation_uuid = data.get("conversation_uuid", "unknown")
 
-    # Ensure the webhooks directory exists
+    # Log webhook data for debugging
     webhooks_dir = 'webhooks'
     os.makedirs(webhooks_dir, exist_ok=True)
-
-    # write the webhook DTMF data to a file
     file_path = os.path.join(webhooks_dir, f"dtmf_input_{conversation_uuid}.json")
     with open(file_path, 'a', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
 
-    # DTMF input processing
+    # Process DTMF input
     dtmf_data = data.get('dtmf', {})
     dtmf = dtmf_data.get('digits') if isinstance(dtmf_data, dict) else dtmf_data
 
-    # speech input processing
+    # Process speech recognition results
     speech_results = data.get('speech', {}).get('results', [])
-
     if speech_results:
         speech_text_raw = speech_results[0].get('text', '') if speech_results[0] else ''
         speech_text = speech_text_raw.strip() if speech_text_raw else ''
@@ -204,9 +270,67 @@ async def dtmf_input_webhook(request: Request):
     print(f'Speech text: {speech_text}')
 
     def handle_input(input_value):
-        pass
+        """
+        Process caller input and return appropriate NCCO response
 
-    # process DTMF or speech input
+        Args:
+            input_value (str): The input value (DTMF digit or speech text)
+
+        Returns:
+            list: NCCO actions or None for invalid input
+        """
+        if input_value == "1":  # Confirmation
+            return [
+                {
+                    'action': 'talk',
+                    'text': '<speak>Thank you for confirming your appointment. Have a great day!</speak>',
+                    'language': 'en-US',
+                    'style': 2,
+                    'premium': True
+                }
+            ]
+        elif input_value == "2":  # Reschedule request
+            return [
+                {
+                    'action': 'talk',
+                    'text': '<speak>Please call our office to reschedule your appointment.</speak>',
+                    'language': 'en-US',
+                    'style': 2,
+                    'premium': True
+                }
+            ]
+        elif input_value == "7":  # Repeat options
+            return [
+                {
+                    'action': 'talk',
+                    'text': '<speak>Please press or say 1 to confirm, 2 to reschedule, or 7 to repeat your options.</speak>',
+                    'language': 'en-US',
+                    'style': 2,
+                    'premium': True,
+                    'bargeIn': True
+                },
+                {
+                    'action': 'input',
+                    'dtmf': {
+                        'maxDigits': 1,
+                        'timeOut': 10
+                    },
+                    'speech': {
+                        'language': 'en-US',
+                        'context': ['1', '2', '7'],
+                        'startTimeout': 10,
+                        'maxDuration': 5,
+                        'endOnSilence': 1.5
+                    },
+                    'type': ['dtmf', 'speech'],
+                    'eventUrl': [get_webhook_url('dtmf_input')],
+                    'eventMethod': 'POST'
+                }
+            ]
+        else:  # Invalid input
+            return None
+
+    # Route input to appropriate handler
     if dtmf and isinstance(dtmf_data, dict) and dtmf_data.get('digits'):
         ncco = handle_input(dtmf)
     elif speech_text:
@@ -214,28 +338,29 @@ async def dtmf_input_webhook(request: Request):
     else:
         ncco = None
 
-    # handle invalid DTMF or speech input and create new input prompt
+    # Handle invalid input with default response
     if ncco is None:
         ncco = [
             {
                 'action': 'talk',
-                'text': '<speak>Invalid input. Please press or say 1 to confirm, 2 to reschedule, or 7 to repeat the message.</speak>',  # Fixed typo
+                'text': '<speak>Invalid input. Please press or say 1 to confirm, 2 to reschedule, or 7 to repeat the message.</speak>',
                 'language': 'en-US',
                 'style': 2,
-                'premium': True
+                'premium': True,
+                'bargeIn': True
             },
             {
                 'action': 'input',
                 'dtmf': {
                     'maxDigits': 1,
-                    'timeOut': 10  # Note: should be 'timeOut' not 'timeout'
+                    'timeOut': 10
                 },
-                'speech': {  # Fixed: moved speech out of dtmf block
+                'speech': {
                     'language': 'en-US',
                     'context': ['1', '2', '7'],
                     'startTimeout': 10,
                     'maxDuration': 5,
-                    'endOnSilence': 1.5  # Fixed typo: 'endsOnSilence' → 'endOnSilence'
+                    'endOnSilence': 1.5
                 },
                 'type': ['dtmf', 'speech'],
                 'eventUrl': [get_webhook_url('dtmf_input')],
@@ -249,23 +374,25 @@ async def dtmf_input_webhook(request: Request):
 
 @app.post("/event")
 async def event_webhook(request: Request):
+    """
+    Handle call events including Advanced Machine Detection results
+    Processes human/machine detection and manages call flow accordingly
+    """
     data = await request.json()
     status = data.get('status')
     print(f'Event webhook data received with status: {status}')
     print(f'Full data:', json.dumps(data, indent=2))
     conversation_uuid = data.get("conversation_uuid", "unknown")
 
-    # validate the webhooks directory exists, if not, build it
+    # Log all events for debugging
     webhooks_dir = 'webhooks'
     os.makedirs(webhooks_dir, exist_ok=True)
-
-    # write the event webhook data to the directory
     file_path = os.path.join(webhooks_dir, f"event_{conversation_uuid}.json")
     with open(file_path, 'a') as f:
         json.dump(data, f, indent=2)
         f.write("\n")
 
-    # logging for speech and ASR events
+    # Special logging for speech events
     if 'speech' in data:
         print('Capturing ASR/Speech event')
         speech_file_path = os.path.join(webhooks_dir, f"speech_{conversation_uuid}.json")
@@ -273,16 +400,17 @@ async def event_webhook(request: Request):
             json.dump(data, f, indent=2, ensure_ascii=False)
             f.write("\n")
 
-    # AMD behavior below for human and machine detection
+    # Handle Advanced Machine Detection results
     if status == 'human':
         print('Human detected, starting IVR flow')
         ncco = [
             {
                 'action': 'talk',
-                'text': '<speak>This is a test of Vonage Automatic Speech Recognition and Advanced Machine Detection  You can speak to me, or likewise use use your phone keypad.  Press or say one to confirm, two to reschedule, or seven to repeat your options</speak>',
+                'text': '<speak>This is Baylor Scott and White Orthopedics, with an appointment confirmation call. You can speak to me, or likewise, use your phone keypad. Press or say one to confirm; two to reschedule; or seven to repeat your options.</speak>',
                 'language': 'en-US',
                 'style': 2,
-                'premium': True
+                'premium': True,
+                'bargeIn': True
             },
             {
                 'action': 'input',
@@ -309,14 +437,14 @@ async def event_webhook(request: Request):
         sub_state = data.get('sub_state')
         print('Machine detected with substate:', sub_state)
 
-        # beep start detection based on webhook
         if sub_state == 'beep_start':
+            # Voicemail beep detected - leave message
             print('Beep detected, playing the voicemail message')
             ncco = [
                 {
                     'action': 'talk',
-                    'text': '''<speak>This is Baylor Scott and White Orthopedic Associates calling to remind you of your upcoming appointment.</speak>''',
-                    'language': 'en-US',  # Fixed: was 'language: "en-US",'
+                    'text': '<speak>This is Baylor Scott and White Orthopedic Associates calling to remind you of your upcoming appointment.</speak>',
+                    'language': 'en-US',
                     'style': 2,
                     'premium': True,
                     'level': 1,
@@ -325,14 +453,13 @@ async def event_webhook(request: Request):
             ]
             print('Returning voicemail NCCO:', json.dumps(ncco, indent=2))
             return JSONResponse(content=ncco, status_code=200)
-
-        else:  # Fixed: proper indentation and placement
-            # conditional logic to handle call screening systems where a machine is detected but no beep
+        else:
+            # Machine detected but no beep - likely call screening
             print("Initial machine detected, playing call screener greeting")
             ncco = [
                 {
                     'action': 'talk',
-                    'text': '''<speak>Hi, this is Baylor Scott and White Orthopedic Associates, calling to remind you of your appointment tomorrow.</speak>''',
+                    'text': '<speak>Baylor Scott and White Orthopedics appointment reminder.</speak>',
                     'language': 'en-US',
                     'style': 2,
                     'premium': True,
@@ -343,91 +470,108 @@ async def event_webhook(request: Request):
             print("Returning screening NCCO:", json.dumps(ncco, indent=2))
             return JSONResponse(content=ncco, status_code=200)
 
-    # fallback response
+    # Default response for other event types
     return JSONResponse(content={'status': 'success'}, status_code=200)
+
 
 @app.post('/asr')
 async def asr_webhook(request: Request):
+    """
+    Handle Automatic Speech Recognition events (optional)
+    Logs ASR data for analysis and debugging
+    """
     data = await request.json()
     status = data.get('status')
-    print(f'Event webhook data received with status: {status}')
+    print(f'ASR webhook data received with status: {status}')
     print(f'Full data:', json.dumps(data, indent=2))
     conversation_uuid = data.get("conversation_uuid", "unknown")
-    # ensure the webhooks directory exists
+
+    # Log ASR events
     webhooks_dir = 'asr'
     os.makedirs(webhooks_dir, exist_ok=True)
-    # write event data to a file
     file_path = os.path.join(webhooks_dir, f"asr_{conversation_uuid}.json")
     with open(file_path, 'a', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-        f.write("\n") # new line for readability
-
+        f.write("\n")
 
     return JSONResponse(content={'status': 'success'}, status_code=200)
 
+
 @app.post('/recording')
 async def recording_webhook(request: Request):
+    """
+    Handle recording completion events
+    Queues recordings for asynchronous download
+    """
     data = await request.json()
     recording_url = data.get('recording_url')
     conversation_uuid = data.get("conversation_uuid", "unknown")
 
-    # add the download task to the queue
+    # Add download task to queue for background processing
     download_queue.put((recording_url, conversation_uuid))
     return JSONResponse(content={'status': 'success'}, status_code=200)
 
 
-@app.post('/rtc_events') #optional to include, rtc events are chatty
+@app.post('/rtc_events')
 async def rtc_events_webhook(request: Request):
+    """
+    Handle Real-Time Communication events (optional)
+    These events provide detailed call state information but are verbose
+    """
     data = await request.json()
     conversation_uuid = data.get("conversation_uuid", "unknown") or data.get('body', {}).get('id', 'unknown')
-    # ensure the webhooks directory exists
+
+    # Log RTC events
     webhooks_dir = 'rtc_events'
     os.makedirs(webhooks_dir, exist_ok=True)
     file_path = os.path.join(webhooks_dir, f"rtc_{conversation_uuid}.json")
     with open(file_path, 'a') as f:
         json.dump(data, f, indent=2)
-        f.write("\n") # for readability
+        f.write("\n")
 
     return JSONResponse(content={'status': 'success'}, status_code=200)
 
 
 def run_test_cycle():
-    total_calls = len(TEST_LOOP)*1 # this is the total number of times to run the the test loop
-    numbers = TEST_LOOP * 1 #1-10, repeating each number for that integer value
-    random.shuffle(numbers) # shuffle the numbers to prevent the calls from being detected as fraud
+    """
+    Execute automated test calling cycle
+    Calls all numbers in TEST_LOOP with randomized timing to avoid fraud detection
+    """
+    total_calls = len(TEST_LOOP) * 1
+    numbers = TEST_LOOP * 1  # Multiply to repeat test cycles if needed
+    random.shuffle(numbers)  # Randomize order to prevent fraud detection
 
     for i, number in enumerate(numbers):
-        print(f'Attempting call {i} of {total_calls} to {number}')
-        make_call(number) #run the make call function which contains preliminary set of call control logic
-        wait_time = random.randint(70, 90) # this is the wait time between calls, again, to prevent calls from being flagged
+        print(f'Attempting call {i + 1} of {total_calls} to {number}')
+        make_call(number)
+
+        # Random delay between calls to simulate human behavior
+        wait_time = random.randint(70, 90)
         print(f'Waiting for {wait_time} seconds before next call')
         time.sleep(wait_time)
 
-    # wait for media recording downloads to complete
+    # Wait for all recording downloads to complete
     download_queue.join()
 
-    # retry failed downloads
+    # Retry any failed downloads
     retry_failed_downloads()
     print('All calls and downloads are complete')
 
 
 if __name__ == '__main__':
-    # start the download worker thread
+    # Start background download worker
     threading.Thread(target=download_worker, daemon=True).start()
 
-    # start the test cycle in a separate thread
+    # Start test cycle in separate thread
     test_cycle_thread = threading.Thread(target=run_test_cycle)
     test_cycle_thread.start()
-    # designate the port for webhook service (ngrok)
+
+    # Run FastAPI server
     uvicorn.run(app, host="0.0.0.0", port=5003)
-    # wait for the test cycle to complete
+
+    # Wait for test cycle completion
     test_cycle_thread.join()
     print("Script execution complete")
-
-
-
-
-
 
 
 
