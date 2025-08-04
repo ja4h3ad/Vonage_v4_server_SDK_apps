@@ -237,18 +237,12 @@ threading.Thread(target=download_worker, daemon=True).start()
 async def event_webhook(request: Request):
     """
     Handle call events including Advanced Machine Detection results
-    Processes human/machine detection and manages call flow accordingly
     """
     data = await request.json()
     status = data.get('status')
     print(f'Event webhook data received with status: {status}')
     print(f'Full data:', json.dumps(data, indent=2))
     conversation_uuid = data.get("conversation_uuid", "unknown")
-
-    # Enhanced debugging - check for any speech-related data
-    if any(key in data for key in ['speech', 'asr', 'transcription']):
-        print("🎤 SPEECH/ASR DATA DETECTED IN EVENT WEBHOOK!")
-        print(f"Speech data keys found: {[k for k in data.keys() if 'speech' in k.lower() or 'asr' in k.lower()]}")
 
     # Log all events for debugging
     webhooks_dir = 'webhooks'
@@ -258,25 +252,17 @@ async def event_webhook(request: Request):
         json.dump(data, f, indent=2)
         f.write("\n")
 
-    # Special logging for speech events BEFORE status handling
-    if 'speech' in data:
-        print('🎤 Capturing ASR/Speech event in EVENT webhook')
-        speech_file_path = os.path.join(webhooks_dir, f"speech_{conversation_uuid}.json")
-        with open(speech_file_path, 'a', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-
-    # Handle call status events
     if status == 'answered':
         print('Call answered, starting immediate ASR to capture AI screener greeting')
+        # Start ASR immediately but don't interfere with AMD
         ncco = [
             {
                 'action': 'input',
                 'speech': {
                     'language': 'en-US',
                     'startTimeout': 1,  # Start listening immediately
-                    'maxDuration': 45,  # Long enough to capture full greeting
-                    'endOnSilence': 8,  # Long silence to avoid cutting off
+                    'maxDuration': 30,  # Shorter duration to avoid conflicts
+                    'endOnSilence': 3,  # Reasonable silence detection
                     'context': []
                 },
                 'type': ['speech'],
@@ -289,6 +275,7 @@ async def event_webhook(request: Request):
 
     elif status == 'human':
         print('Human detected, starting IVR flow')
+        # Your existing human detection code...
         ncco = [
             {
                 'action': 'talk',
@@ -316,177 +303,182 @@ async def event_webhook(request: Request):
                 'eventMethod': 'POST'
             }
         ]
-        print("Returning human NCCO:", json.dumps(ncco, indent=2))
         return JSONResponse(content=ncco, status_code=200)
 
     elif status == 'machine':
+        # Machine detection - handle all sub_states the same way
         sub_state = data.get('sub_state')
-        print('Machine detected with substate:', sub_state)
+        print(f'Machine detected with substate: {sub_state}')
 
+        # Skip beep_start logic due to Apple call screener false positives
         if sub_state == 'beep_start':
-            print('Beep detected, playing the voicemail message')
-            ncco = [
-                {
-                    'action': 'talk',
-                    'text': '<speak>This is the TTS that will play out if an answering machine beep is detected.</speak>',
+            print('Beep detected but ignoring due to Apple call screener false positives')
+
+        # Handle all machine detection the same way (including beep_start)
+        print("Machine detected, handling call screener interaction")
+        ncco = [
+            {
+                'action': 'talk',
+                'text': '<speak>Hello, this is Baylor Scott and White Orthopedics calling about an appointment confirmation.</speak>',
+                'language': 'en-US',
+                'style': 2,
+                'premium': True
+            },
+            {
+                'action': 'input',
+                'speech': {
                     'language': 'en-US',
-                    'style': 2,
-                    'premium': True,
-                    'level': 1,
-                    'loop': 1,
-                }
-            ]
-            print('Returning voicemail NCCO:', json.dumps(ncco, indent=2))
-            return JSONResponse(content=ncco, status_code=200)
-        else:
-            print("Initial machine detected, playing call screener greeting")
-            ncco = [
-                {
-                    'action': 'talk',
-                    'text': '<speak>This is the call screener TTS playout.</speak>',
-                    'language': 'en-US',
-                    'style': 2,
-                    'premium': True,
-                    'level': 1,
-                    'loop': 1
-                }
-            ]
-            print("Returning screening NCCO:", json.dumps(ncco, indent=2))
-            return JSONResponse(content=ncco, status_code=200)
+                    'startTimeout': 5,
+                    'maxDuration': 30,
+                    'endOnSilence': 3,
+                    'context': []
+                },
+                'type': ['speech'],
+                'eventUrl': [get_webhook_url('asr_machine')],
+                'eventMethod': 'POST'
+            }
+        ]
+        return JSONResponse(content=ncco, status_code=200)
 
     # Default response for other event types
     return JSONResponse(content={'status': 'success'}, status_code=200)
 
 
-@app.post("/asr_capture")
-async def asr_capture_webhook(request: Request):
-    """
-    Handle ASR results from immediate capture on call answer
-    This captures the very first speech from AI screeners
-    """
-    data = await request.json()
-    print("🎯 Immediate ASR capture webhook:", json.dumps(data, indent=2))
-    conversation_uuid = data.get("conversation_uuid", "unknown")
-
-    # Enhanced logging for immediate capture
-    if 'speech' in data:
-        speech_data = data.get('speech', {})
-        results = speech_data.get('results', [])
-        if results and results[0]:
-            detected_text = results[0].get('text', '').strip()
-            confidence = results[0].get('confidence', 0)
-            print(f"🎯 IMMEDIATE CAPTURE: '{detected_text}' (confidence: {confidence})")
-
-            # Log the immediate capture for analysis
-            immediate_responses_dir = 'immediate_responses'
-            os.makedirs(immediate_responses_dir, exist_ok=True)
-            response_file = os.path.join(immediate_responses_dir, f"immediate_{conversation_uuid}.json")
-
-            immediate_response = {
-                'timestamp': data.get('timestamp'),
-                'conversation_uuid': conversation_uuid,
-                'detected_text': detected_text,
-                'confidence': confidence,
-                'full_speech_data': speech_data,
-                'capture_type': 'immediate_on_answer'
-            }
-
-            with open(response_file, 'a', encoding='utf-8') as f:
-                json.dump(immediate_response, f, indent=2, ensure_ascii=False)
-                f.write('\n')
-
-            # Now respond appropriately to what was captured
-            detected_text_lower = detected_text.lower()
-
-            if any(phrase in detected_text_lower for phrase in
-                   ['hello', 'hi', 'thanks for calling', 'please hold', 'one moment']):
-                print("🎯 Detected AI screener greeting, responding professionally")
-                ncco = [
-                    {
-                        'action': 'talk',
-                        'text': '<speak>Hello, this is Baylor Scott and White Orthopedics calling about an appointment confirmation.</speak>',
-                        'language': 'en-US',
-                        'style': 2,
-                        'premium': True
-                    },
-                    {
-                        'action': 'input',
-                        'speech': {
-                            'language': 'en-US',
-                            'startTimeout': 5,
-                            'maxDuration': 30,
-                            'endOnSilence': 3,
-                            'context': []
-                        },
-                        'type': ['speech'],
-                        'eventUrl': [get_webhook_url('asr_machine')],
-                        'eventMethod': 'POST'
-                    }
-                ]
-                return JSONResponse(content=ncco, status_code=200)
-            else:
-                print("🎯 Continuing to listen for more screener speech")
-                ncco = [
-                    {
-                        'action': 'input',
-                        'speech': {
-                            'language': 'en-US',
-                            'startTimeout': 5,
-                            'maxDuration': 30,
-                            'endOnSilence': 4,
-                            'context': []
-                        },
-                        'type': ['speech'],
-                        'eventUrl': [get_webhook_url('asr_capture')],
-                        'eventMethod': 'POST'
-                    }
-                ]
-                return JSONResponse(content=ncco, status_code=200)
-
-    # Default: continue listening
-    ncco = [
-        {
-            'action': 'input',
-            'speech': {
-                'language': 'en-US',
-                'startTimeout': 10,
-                'maxDuration': 30,
-                'endOnSilence': 4,
-                'context': []
-            },
-            'type': ['speech'],
-            'eventUrl': [get_webhook_url('asr_capture')],
-            'eventMethod': 'POST'
-        }
-    ]
-
-    return JSONResponse(content=ncco, status_code=200)
-
+# @app.post("/asr_capture")
+# async def asr_capture_webhook(request: Request):
+#     """
+#     Handle ASR results from immediate capture on call answer
+#     This captures the very first speech from AI screeners
+#     """
+#     data = await request.json()
+#     print("🎯 Immediate ASR capture webhook:", json.dumps(data, indent=2))
+#     conversation_uuid = data.get("conversation_uuid", "unknown")
+#
+#     # Enhanced logging for immediate capture
+#     if 'speech' in data:
+#         speech_data = data.get('speech', {})
+#         results = speech_data.get('results', [])
+#         if results and results[0]:
+#             detected_text = results[0].get('text', '').strip()
+#             confidence = results[0].get('confidence', 0)
+#             print(f"🎯 IMMEDIATE CAPTURE: '{detected_text}' (confidence: {confidence})")
+#
+#             # Log the immediate capture for analysis
+#             immediate_responses_dir = 'immediate_responses'
+#             os.makedirs(immediate_responses_dir, exist_ok=True)
+#             response_file = os.path.join(immediate_responses_dir, f"immediate_{conversation_uuid}.json")
+#
+#             immediate_response = {
+#                 'timestamp': data.get('timestamp'),
+#                 'conversation_uuid': conversation_uuid,
+#                 'detected_text': detected_text,
+#                 'confidence': confidence,
+#                 'full_speech_data': speech_data,
+#                 'capture_type': 'immediate_on_answer'
+#             }
+#
+#             with open(response_file, 'a', encoding='utf-8') as f:
+#                 json.dump(immediate_response, f, indent=2, ensure_ascii=False)
+#                 f.write('\n')
+#
+#             # Now respond appropriately to what was captured
+#             detected_text_lower = detected_text.lower()
+#
+#             if any(phrase in detected_text_lower for phrase in
+#                    ['hello', 'hi', 'thanks for calling', 'please hold', 'one moment']):
+#                 print("🎯 Detected AI screener greeting, responding professionally")
+#                 ncco = [
+#                     {
+#                         'action': 'talk',
+#                         'text': '<speak>Hello, this is Baylor Scott and White Orthopedics calling about an appointment confirmation.</speak>',
+#                         'language': 'en-US',
+#                         'style': 2,
+#                         'premium': True
+#                     },
+#                     {
+#                         'action': 'input',
+#                         'speech': {
+#                             'language': 'en-US',
+#                             'startTimeout': 5,
+#                             'maxDuration': 30,
+#                             'endOnSilence': 3,
+#                             'context': []
+#                         },
+#                         'type': ['speech'],
+#                         'eventUrl': [get_webhook_url('asr_machine')],
+#                         'eventMethod': 'POST'
+#                     }
+#                 ]
+#                 return JSONResponse(content=ncco, status_code=200)
+#             else:
+#                 print("🎯 Continuing to listen for more screener speech")
+#                 ncco = [
+#                     {
+#                         'action': 'input',
+#                         'speech': {
+#                             'language': 'en-US',
+#                             'startTimeout': 5,
+#                             'maxDuration': 30,
+#                             'endOnSilence': 4,
+#                             'context': []
+#                         },
+#                         'type': ['speech'],
+#                         'eventUrl': [get_webhook_url('asr_capture')],
+#                         'eventMethod': 'POST'
+#                     }
+#                 ]
+#                 return JSONResponse(content=ncco, status_code=200)
+#
+#     # Default: continue listening
+#     ncco = [
+#         {
+#             'action': 'input',
+#             'speech': {
+#                 'language': 'en-US',
+#                 'startTimeout': 10,
+#                 'maxDuration': 30,
+#                 'endOnSilence': 4,
+#                 'context': []
+#             },
+#             'type': ['speech'],
+#             'eventUrl': [get_webhook_url('asr_capture')],
+#             'eventMethod': 'POST'
+#         }
+#     ]
+#
+#     return JSONResponse(content=ncco, status_code=200)
+#
 
 @app.post("/initial_capture")
 async def initial_capture_webhook(request: Request):
     """
     Handle ASR results from initial call answer - captures AI screener greeting
-    This runs asynchronously while AMD analyzes the call
     """
     data = await request.json()
     print("🎯 Initial capture webhook:", json.dumps(data, indent=2))
     conversation_uuid = data.get("conversation_uuid", "unknown")
 
-    # Store the initial capture globally for later use
+    # Create directory for initial greetings
+    initial_greetings_dir = 'initial_greetings'
+    os.makedirs(initial_greetings_dir, exist_ok=True)
+
+    # Log the webhook data
+    file_path = os.path.join(initial_greetings_dir, f"initial_capture_{conversation_uuid}.json")
+    with open(file_path, 'a', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+    # Process speech data if present
     if 'speech' in data:
         speech_data = data.get('speech', {})
         results = speech_data.get('results', [])
         if results and results[0]:
             detected_text = results[0].get('text', '').strip()
             confidence = results[0].get('confidence', 0)
-            print(f"🎯 INITIAL SCREENER GREETING: '{detected_text}' (confidence: {confidence})")
+            print(f"🎯 INITIAL CAPTURE: '{detected_text}' (confidence: {confidence})")
 
-            # Store this for use in machine detection logic
-            initial_greetings_dir = 'initial_greetings'
-            os.makedirs(initial_greetings_dir, exist_ok=True)
+            # Store the greeting data
             greeting_file = os.path.join(initial_greetings_dir, f"greeting_{conversation_uuid}.json")
-
             greeting_data = {
                 'conversation_uuid': conversation_uuid,
                 'initial_greeting': detected_text,
@@ -501,12 +493,74 @@ async def initial_capture_webhook(request: Request):
             print(f"🎯 Stored initial greeting for conversation {conversation_uuid}")
         else:
             print("🎯 No speech detected in initial capture")
+    else:
+        print("🎯 No speech data in initial capture webhook")
 
-    # Return empty NCCO - we don't want to interfere with AMD flow
-    # AMD will take over and send machine/human status
-    return JSONResponse(content=[], status_code=200)
+    # IMPORTANT: Continue listening with a new input action
+    # Don't return empty NCCO as this will hang up the call
+    ncco = [
+        {
+            'action': 'input',
+            'speech': {
+                'language': 'en-US',
+                'startTimeout': 5,
+                'maxDuration': 20,
+                'endOnSilence': 4,
+                'context': []
+            },
+            'type': ['speech'],
+            'eventUrl': [get_webhook_url('continued_capture')],
+            'eventMethod': 'POST'
+        }
+    ]
+
+    return JSONResponse(content=ncco, status_code=200)
 
 
+@app.post("/continued_capture")
+async def continued_capture_webhook(request: Request):
+    """
+    Handle continued ASR capture while waiting for AMD decision
+    """
+    data = await request.json()
+    print("🎯 Continued capture webhook:", json.dumps(data, indent=2))
+    conversation_uuid = data.get("conversation_uuid", "unknown")
+
+    # Log continued capture
+    continued_dir = 'continued_capture'
+    os.makedirs(continued_dir, exist_ok=True)
+    file_path = os.path.join(continued_dir, f"continued_{conversation_uuid}.json")
+    with open(file_path, 'a', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+    # Process any speech
+    if 'speech' in data:
+        speech_data = data.get('speech', {})
+        results = speech_data.get('results', [])
+        if results and results[0]:
+            detected_text = results[0].get('text', '').strip()
+            confidence = results[0].get('confidence', 0)
+            print(f"🎯 CONTINUED CAPTURE: '{detected_text}' (confidence: {confidence})")
+
+    # Keep listening until AMD makes a decision
+    ncco = [
+        {
+            'action': 'input',
+            'speech': {
+                'language': 'en-US',
+                'startTimeout': 10,
+                'maxDuration': 30,
+                'endOnSilence': 5,
+                'context': []
+            },
+            'type': ['speech'],
+            'eventUrl': [get_webhook_url('continued_capture')],
+            'eventMethod': 'POST'
+        }
+    ]
+
+    return JSONResponse(content=ncco, status_code=200)
 def get_initial_greeting(conversation_uuid):
     """
     Retrieve the stored initial greeting for a conversation
@@ -675,7 +729,7 @@ async def asr_machine_webhook(request: Request):
     return JSONResponse(content=ncco, status_code=200)
 
 
-@app.post('/asr')
+@app.post('/human_asr')
 async def asr_webhook(request: Request):
     """
     Handle Automatic Speech Recognition events (optional)
