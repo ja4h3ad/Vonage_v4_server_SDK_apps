@@ -899,6 +899,8 @@ async def dtmf_input_webhook(request: Request):
 
     print(f"📝 Returning NCCO: {json.dumps(ncco, indent=2)}")
     return JSONResponse(content=ncco, status_code=200)
+
+
 @app.post('/recording')
 async def recording_webhook(request: Request):
     """

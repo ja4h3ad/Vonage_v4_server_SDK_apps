@@ -433,47 +433,30 @@ async def event_webhook(request: Request):
         print("Returning human NCCO:", json.dumps(ncco, indent=2))
         return JSONResponse(content=ncco, status_code=200)
 
+
+
     elif status == 'machine':
         sub_state = data.get('sub_state')
-        print('Machine detected with substate:', sub_state)
+        print(f'Machine detected with substate: {sub_state}')
+        print("Machine detected - starting ASR to capture AI screener conversation")
 
-        if sub_state == 'beep_start':
-            # Voicemail beep detected - leave message
-            print('Beep detected, playing the voicemail message')
-            ncco = [
-                {
-                    'action': 'talk',
-                    'text': '<speak>This is Baylor Scott and White Orthopedic Associates calling to remind you of your upcoming appointment.</speak>',
+        ncco = [
+            {
+                'action': 'input',
+                'speech': {
                     'language': 'en-US',
-                    'style': 2,
-                    'premium': True,
-                    'level': 1,
-                    'loop': 1,
-                }
-            ]
-            print('Returning voicemail NCCO:', json.dumps(ncco, indent=2))
-            return JSONResponse(content=ncco, status_code=200)
-        else:
-            # Machine detected but no beep - likely call screening
-            print("Initial machine detected, playing call screener greeting")
-            ncco = [
-                {
-                    'action': 'talk',
-                    'text': '<speak>Baylor Scott and White Orthopedics appointment reminder.</speak>',
-                    'language': 'en-US',
-                    'style': 2,
-                    'premium': True,
-                    'level': 1,
-                    'loop': 1
-                }
-            ]
-            print("Returning screening NCCO:", json.dumps(ncco, indent=2))
-            return JSONResponse(content=ncco, status_code=200)
-
-    # Default response for other event types
-    return JSONResponse(content={'status': 'success'}, status_code=200)
-
-
+                    'startTimeout': 2,  # Quick start - screener may still be talking
+                    'maxDuration': 45,
+                    'endOnSilence': 4,  # Wait for pauses in screener speech
+                    'context': []  # No specific context - capture everything
+                },
+                'type': ['speech'],
+                'eventUrl': [get_webhook_url('asr_machine')],
+                'eventMethod': 'POST'
+            }
+        ]
+        print("Starting ASR for AI screener interaction (no beep handling)")
+        return JSONResponse(content=ncco, status_code=200)
 @app.post('/asr')
 async def asr_webhook(request: Request):
     """
@@ -497,6 +480,220 @@ async def asr_webhook(request: Request):
     return JSONResponse(content={'status': 'success'}, status_code=200)
 
 
+@app.post("/asr_machine")
+async def asr_machine_webhook(request: Request):
+    """
+    Handle ASR results from Apple AI screener interactions
+    This captures what the AI screener says and responds appropriately
+    """
+    data = await request.json()
+    print("🤖 AI Screener ASR webhook data:", json.dumps(data, indent=2))
+    conversation_uuid = data.get("conversation_uuid", "unknown")
+
+    # Enhanced logging for AI screener ASR
+    if 'speech' in data:
+        speech_data = data.get('speech', {})
+        results = speech_data.get('results', [])
+        if results and results[0]:
+            detected_text = results[0].get('text', '').strip()
+            confidence = results[0].get('confidence', 0)
+            print(f"🤖 AI SCREENER SAID: '{detected_text}' (confidence: {confidence})")
+
+            # Log the screener's response for analysis
+            screener_responses_dir = 'screener_responses'
+            os.makedirs(screener_responses_dir, exist_ok=True)
+            response_file = os.path.join(screener_responses_dir, f"screener_{conversation_uuid}.json")
+
+            screener_response = {
+                'timestamp': data.get('timestamp'),
+                'conversation_uuid': conversation_uuid,
+                'detected_text': detected_text,
+                'confidence': confidence,
+                'full_speech_data': speech_data
+            }
+
+            with open(response_file, 'a', encoding='utf-8') as f:
+                json.dump(screener_response, f, indent=2, ensure_ascii=False)
+                f.write('\n')
+
+            # Analyze what the AI screener said and respond accordingly
+            detected_text_lower = detected_text.lower()
+
+            # Apple AI Screener: Initial greeting responses
+            if any(phrase in detected_text_lower for phrase in
+                   ['hello', 'hi', 'thanks for calling', 'thank you for calling']):
+                print("🤖 Detected initial AI screener greeting")
+                ncco = [
+                    {
+                        'action': 'talk',
+                        'text': '<speak>Hello, this is Baylor Scott and White Orthopedics calling about an appointment confirmation.</speak>',
+                        'language': 'en-US',
+                        'style': 2,
+                        'premium': True
+                    },
+                    {
+                        'action': 'input',
+                        'speech': {
+                            'language': 'en-US',
+                            'startTimeout': 5,
+                            'maxDuration': 30,
+                            'endOnSilence': 3,
+                            'context': []
+                        },
+                        'type': ['speech'],
+                        'eventUrl': [get_webhook_url('asr_machine')],
+                        'eventMethod': 'POST'
+                    }
+                ]
+                return JSONResponse(content=ncco, status_code=200)
+
+            # Apple AI Screener: Identity/purpose questions
+            elif any(phrase in detected_text_lower for phrase in
+                     ['who is this', 'who\'s calling', 'what is this regarding', 'purpose of call']):
+                print("🤖 AI screener asking for caller identification")
+                ncco = [
+                    {
+                        'action': 'talk',
+                        'text': '<speak>This is Baylor Scott and White Orthopedics calling to confirm an upcoming appointment.</speak>',
+                        'language': 'en-US',
+                        'style': 2,
+                        'premium': True
+                    },
+                    {
+                        'action': 'input',
+                        'speech': {
+                            'language': 'en-US',
+                            'startTimeout': 5,
+                            'maxDuration': 30,
+                            'endOnSilence': 3,
+                            'context': []
+                        },
+                        'type': ['speech'],
+                        'eventUrl': [get_webhook_url('asr_machine')],
+                        'eventMethod': 'POST'
+                    }
+                ]
+                return JSONResponse(content=ncco, status_code=200)
+
+            # Apple AI Screener: "Send more information" voicemail gate
+            elif any(phrase in detected_text_lower for phrase in
+                     ['send more information', 'leave more information', 'provide more details']):
+                print("🤖 AI screener requesting more information - voicemail gate detected")
+                ncco = [
+                    {
+                        'action': 'talk',
+                        'text': '<speak>This is regarding a scheduled appointment confirmation. The patient can call us back at their convenience if they need to reschedule.</speak>',
+                        'language': 'en-US',
+                        'style': 2,
+                        'premium': True
+                    },
+                    {
+                        'action': 'input',
+                        'speech': {
+                            'language': 'en-US',
+                            'startTimeout': 10,
+                            'maxDuration': 30,
+                            'endOnSilence': 4,
+                            'context': []
+                        },
+                        'type': ['speech'],
+                        'eventUrl': [get_webhook_url('asr_machine')],
+                        'eventMethod': 'POST'
+                    }
+                ]
+                return JSONResponse(content=ncco, status_code=200)
+
+            # Apple AI Screener: Hold/wait requests
+            elif any(phrase in detected_text_lower for phrase in
+                     ['please hold', 'one moment', 'please wait', 'hold on', 'just a moment']):
+                print("🤖 AI screener asking to wait")
+                ncco = [
+                    {
+                        'action': 'talk',
+                        'text': '<speak>Thank you, I\'ll wait.</speak>',
+                        'language': 'en-US',
+                        'style': 2,
+                        'premium': True
+                    },
+                    {
+                        'action': 'input',
+                        'speech': {
+                            'language': 'en-US',
+                            'startTimeout': 30,  # Longer timeout for waiting
+                            'maxDuration': 60,
+                            'endOnSilence': 5,
+                            'context': []
+                        },
+                        'type': ['speech'],
+                        'eventUrl': [get_webhook_url('asr_machine')],
+                        'eventMethod': 'POST'
+                    }
+                ]
+                return JSONResponse(content=ncco, status_code=200)
+
+            # Apple AI Screener: Unavailability responses
+            elif any(phrase in detected_text_lower for phrase in
+                     ['not available', 'not here', 'unavailable', 'can\'t come to phone', 'busy right now']):
+                print("🤖 AI screener says person is unavailable")
+                ncco = [
+                    {
+                        'action': 'talk',
+                        'text': '<speak>Thank you. Please let them know Baylor Scott and White called about their appointment confirmation. They can call us back at their convenience.</speak>',
+                        'language': 'en-US',
+                        'style': 2,
+                        'premium': True
+                    }
+                ]
+                return JSONResponse(content=ncco, status_code=200)
+
+            # Apple AI Screener: Generic responses to continue conversation
+            else:
+                print("🤖 Unrecognized AI screener response, continuing to listen")
+                ncco = [
+                    {
+                        'action': 'input',
+                        'speech': {
+                            'language': 'en-US',
+                            'startTimeout': 5,
+                            'maxDuration': 30,
+                            'endOnSilence': 4,
+                            'context': []
+                        },
+                        'type': ['speech'],
+                        'eventUrl': [get_webhook_url('asr_machine')],
+                        'eventMethod': 'POST'
+                    }
+                ]
+                return JSONResponse(content=ncco, status_code=200)
+        else:
+            print("🤖 No speech detected from AI screener")
+
+    # Log all screener ASR events
+    webhooks_dir = 'screener_asr'
+    os.makedirs(webhooks_dir, exist_ok=True)
+    file_path = os.path.join(webhooks_dir, f"screener_asr_{conversation_uuid}.json")
+    with open(file_path, 'a', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+    # Default response - continue listening for more AI screener interaction
+    ncco = [
+        {
+            'action': 'input',
+            'speech': {
+                'language': 'en-US',
+                'startTimeout': 10,
+                'maxDuration': 30,
+                'endOnSilence': 4,
+                'context': []
+            },
+            'type': ['speech'],
+            'eventUrl': [get_webhook_url('asr_machine')],
+            'eventMethod': 'POST'
+        }
+    ]
+
+    return JSONResponse(content=ncco, status_code=200)
 @app.post('/recording')
 async def recording_webhook(request: Request):
     """

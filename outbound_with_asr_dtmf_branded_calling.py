@@ -58,7 +58,7 @@ auth = Auth(application_id=VONAGE_APPLICATION_ID, private_key=VONAGE_PRIVATE_KEY
 vonage = Vonage(auth)
 
 # Initialize FastAPI application
-app = FastAPI(title="Vonage Voice API Demo", version="1.0.0")
+app = FastAPI(title="Vonage Voice API Demo with ASR, DTMF and Branded Calling", version="1.0.0")
 
 
 def get_webhook_url(endpoint):
@@ -357,7 +357,7 @@ async def dtmf_input_webhook(request: Request):
         with open(response_file, 'w') as f:
             json.dump(responses, f, indent=2)
 
-        # Also record in our call tracker if available
+        # Also record in call tracker if available
         if hasattr(call_tracker, 'record_survey_response'):
             if current_step == 1:
                 call_tracker.record_survey_response(conversation_uuid, "device_type", user_input)
