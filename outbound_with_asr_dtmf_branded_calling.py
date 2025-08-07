@@ -25,7 +25,7 @@ import uvicorn
 import random
 import json
 from pprint import pprint
-from os.path import join, dirname, abspath
+from os.path import join, dirname
 import queue
 import os
 import time
@@ -49,7 +49,7 @@ load_dotenv(dotenv_path)
 
 VONAGE_APPLICATION_ID = os.environ.get("VONAGE_APPLICATION_ID")
 VONAGE_PRIVATE_KEY = os.environ.get("VONAGE_APPLICATION_PRIVATE_KEY_PATH")
-VONAGE_NUMBER = os.environ.get("FROM_NUMBER")
+VONAGE_NUMBER = os.environ.get("VONAGE_NUMBER")
 WEBHOOK_BASE_URL = os.environ.get("WEBHOOK_BASE_URL")
 TEST_LOOP = [str(num) for num in eval(os.getenv('TEST_LOOP', "['1', '2', '3']"))]
 
@@ -548,105 +548,71 @@ async def event_webhook(request: Request):
         return JSONResponse(content=ncco, status_code=200)
 
 
+
     elif status == 'machine':
         sub_state = data.get('sub_state')
         print('Machine detected with substate:', sub_state)
         if sub_state == 'beep_start':
-            # Voicemail beep detected - leave message
-            # print('Beep detected, playing the voicemail message')
-            # ncco = [ #### 20250721 updates ended here 12:07 machine time
-
-                {
-
-                    'action': 'talk',
-
-                    'text': '<speak>This is Baylor Scott and White Orthopedic Associates calling to remind you of your upcoming appointment.</speak>',
-
-                    'language': 'en-US',
-
-                    'style': 2,
-
-                    'premium': True,
-
-                    'level': 1,
-
-                    'loop': 1,
-
-                }
-
-            ]
-
-            print('Returning voicemail NCCO:', json.dumps(ncco, indent=2))
-
-            return JSONResponse(content=ncco, status_code=200)
-
-        else:
-
-            # Machine detected but no beep - likely call screening
-
-            print("Initial machine detected, playing call screener greeting")
-
+            print('Beep detected, playing the voicemail message')
             ncco = [
 
                 {
-
                     'action': 'talk',
-
-                    'text': '<speak>Baylor Scott and White Orthopedics appointment reminder.</speak>',
-
+                    'text': '<speak>This is the TTS that will play out if an answering machine beep is detected.</speak>',
                     'language': 'en-US',
-
                     'style': 2,
-
                     'premium': True,
-
                     'level': 1,
-
-                    'loop': 1
-
+                    'loop': 1,
                 }
-
             ]
-
-            print("Returning screening NCCO:", json.dumps(ncco, indent=2))
-
+            print('Returning voicemail NCCO:', json.dumps(ncco, indent=2))
             return JSONResponse(content=ncco, status_code=200)
-
+        else:
+            print("Initial machine detected, playing call screener greeting")
+            ncco = [
+                {
+                    'action': 'talk',
+                    'text': '<speak>This is the call screener TTS playout.</speak>',
+                    'language': 'en-US',
+                    'style': 2,
+                    'premium': True,
+                    'level': 1,
+                    'loop': 1
+                }
+            ]
+            print("Returning screening NCCO:", json.dumps(ncco, indent=2))
+            return JSONResponse(content=ncco, status_code=200)
     # Default response for other event types
-
     return JSONResponse(content={'status': 'success'}, status_code=200)
 
-
-@app.route("/asr", methods=['POST'])
-def asr_webhook():
-    data = request.json
+@app.post("/asr")
+async def asr_webhook(request: Request):
+    data = await request.json()
     conversation_uuid = data.get('conversation_uuid', 'unknown')
-
     # Ensure the 'webhooks' directory exists
     webhooks_dir = 'asr'
     os.makedirs(webhooks_dir, exist_ok=True)
-
     # Write event data to a file in the webhooks directory
     file_path = os.path.join(webhooks_dir, f"asr_{conversation_uuid}.json")
     with open(file_path, 'a', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write('\n')  # Add a newline for readability between events
+    return JSONResponse(content={'status': 'success'}, status_code=200)
 
-
-    return jsonify({"status": "success"}), 200
-@app.route("/recording", methods=['POST'])
-def recording_webhook():
-    data = request.json
+@app.post("/recording")
+async def recording_webhook(request: Request):
+    data = await request.json()
     recording_url = data['recording_url']
     conversation_uuid = data.get('conversation_uuid', 'unknown')
 
     # Add the download task to the queue
     download_queue.put((recording_url, conversation_uuid))
 
-    return jsonify({"status": "success"}), 200
-@app.route("/rtc_events", methods=['POST'])
-def rtc_events_webhook():
-    data = request.json
+    return JSONResponse(content={'status': 'success'}, status_code=200)
+@app.post("/rtc_events")
+async def rtc_events_webhook(request: Request):
+    data = await request.json()
     conversation_id = data.get('conversation_id') or data.get('body', {}).get('id', 'unknown')
 
     # Ensure the 'webhooks' directory exists
@@ -660,7 +626,7 @@ def rtc_events_webhook():
         f.write('\n')  # Add a newline for readability between events
 
 
-    return jsonify({"status": "success"}), 200
+    return JSONResponse(content={'status': 'success'}, status_code=200)
 
 
 def run_test_cycle():
@@ -685,18 +651,17 @@ def run_test_cycle():
 
 
 
-if __name__ == "__main__":
-    # Start the download worker thread
+if __name__ == '__main__':
+    # Start background download worker
     threading.Thread(target=download_worker, daemon=True).start()
 
-    # Start the test cycle in a separate thread
+    # Start test cycle in separate thread
     test_cycle_thread = threading.Thread(target=run_test_cycle)
     test_cycle_thread.start()
 
-    # Run the Flask app
-    app.run(port=5003)
+    # Run FastAPI server
+    uvicorn.run(app, host="0.0.0.0", port=5003)
 
-    # Wait for the test cycle to complete
+    # Wait for test cycle completion
     test_cycle_thread.join()
-
-    print("Script execution completed.")
+    print("Script execution complete")

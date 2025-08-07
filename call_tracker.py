@@ -113,28 +113,31 @@ class CallTracker:
 
         self._write_log(correlation_id)
 
-    def record_vonage_call(self, correlation_id: str, response_data: Dict[str, Any]):
-        """
-        Record Vonage call creation response
-
-        Args:
-            correlation_id: Correlation ID from start_auth_flow
-            response_data: Response data from Vonage create_call API
-        """
+    def record_vonage_call(self, correlation_id, response):
+        """Record Vonage call creation response"""
         if correlation_id not in self.active_calls:
-            logger.warning(f"Correlation ID {correlation_id} not found")
+            logger.warning(f"Correlation ID {correlation_id} not found in active calls")
             return
 
-        # Store Vonage call data
-        self.active_calls[correlation_id]["vonage"]["call_uuid"] = response_data.get("uuid")
-        self.active_calls[correlation_id]["vonage"]["conversation_uuid"] = response_data.get("conversation_uuid")
-        self.active_calls[correlation_id]["status"] = response_data.get("status", "unknown")
+        # Handle both dict and Pydantic model responses
+        if hasattr(response, 'model_dump'):
+            # It's a Pydantic model
+            response_data = response.model_dump()
+        else:
+            # It's already a dict
+            response_data = response
 
-        self._write_log(correlation_id)
+        vonage_data = {
+            "call_uuid": response_data.get("uuid"),
+            "conversation_uuid": response_data.get("conversation_uuid"),
+            "status": response_data.get("status"),
+            "direction": response_data.get("direction"),
+            "created_at": datetime.now().isoformat(),
+            "events": []  # Add this line
+        }
 
-        # Return the conversation UUID for reference
-        return response_data.get("conversation_uuid")
-
+        self.active_calls[correlation_id]["vonage"] = vonage_data
+        logger.info(f"Recorded Vonage call data for correlation {correlation_id}")
     def record_vonage_event(self, conversation_uuid: str, event_data: Dict[str, Any]):
         """
         Record a Vonage event webhook
