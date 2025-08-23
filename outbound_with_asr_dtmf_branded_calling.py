@@ -221,7 +221,7 @@ def make_call(to_number, max_retries=5, initial_delay=1):
                 advanced_machine_detection={
                     'behavior': 'continue',  # Continue call flow after detection
                     'mode': 'default',
-                    'beep_timeout': 45  # Wait 45 seconds for voicemail beep
+                    'beep_timeout': 90  # Wait 45 seconds for voicemail beep
                 },
                 event_url=[get_webhook_url('event')],
                 event_method='POST'
@@ -255,7 +255,7 @@ async def dtmf_input_webhook(request: Request):
     Handle DTMF and speech input from callers during IVR interactions
     Processes both keypad input and voice commands
     """
-    data = await request.json
+    data = await request.json()
     print("Full input webhook data:", json.dumps(data, indent=2))
 
     conversation_uuid = data.get('conversation_uuid', 'unknown')
@@ -391,7 +391,7 @@ async def dtmf_input_webhook(request: Request):
                     'context': ['1', '2', 'iphone', 'android'],
                     'startTimeout': 10,
                     'maxDuration': 5,
-                    'endOnSilence': 1.5
+                    'endOnSilence': 0.4
                 },
                 'type': ['dtmf', 'speech'],
                 'eventUrl': [get_webhook_url('dtmf_input')],
