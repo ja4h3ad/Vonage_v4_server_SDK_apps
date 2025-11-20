@@ -1,5 +1,5 @@
 """
-Vonage Voice API Outbound Calling Application
+Vonage Voice API Outbound Calling Application to test the input 2
 
 This application demonstrates advanced voice features including:
 - Outbound call automation with retry logic
@@ -578,7 +578,7 @@ async def dtmf_input_webhook(request: Request):
         ncco = [
             {
                 'action': 'talk',
-                'text': '<speak>What type of device do you have? You can either say, "iPhone", or press or say 1; you can say "Android", or press or say 2.</speak>',
+                'text': '<speak>Please say the number 2.</speak>',
                 'language': 'en-US',
                 'style': 2,
                 'premium': True,
@@ -592,7 +592,7 @@ async def dtmf_input_webhook(request: Request):
                 },
                 'speech': {
                     'language': 'en-US',
-                    'context': ['1', '2', 'iphone', 'android'],
+                    'context': ['2', 'two'],
                     'startTimeout': 10,
                     'maxDuration': 5,
                     'endOnSilence': 0.4
@@ -606,7 +606,7 @@ async def dtmf_input_webhook(request: Request):
         ncco = [
             {
                 'action': 'talk',
-                'text': '<speak>Did you see the Vonage Logo on your handset when I called you? Press or say 1 for yes, press or say 2 for no.</speak>',
+                'text': '<speak>Great. Please say the number two twice, with a brief pause in between each utterance, such as 2, 2.</speak>',
                 'language': 'en-US',
                 'style': 2,
                 'premium': True,
@@ -620,7 +620,7 @@ async def dtmf_input_webhook(request: Request):
                 },
                 'speech': {
                     'language': 'en-US',
-                    'context': ['1', '2', 'yes', 'no'],
+                    'context': ['2', 'two'],
                     'startTimeout': 10,
                     'maxDuration': 5,
                     'endOnSilence': 1.5
@@ -634,7 +634,7 @@ async def dtmf_input_webhook(request: Request):
         ncco = [
             {
                 'action': 'talk',
-                'text': '<speak>Did you see the Vonage caller name on your handset when I called you? Press or say 1 for yes, press or say 2 for no.</speak>',
+                'text': '<speak>Fantastic!  Almost done.  Now, say the number two, three times, with a brief pause in between each utterance, such as 2, 2, 2 .</speak>',
                 'language': 'en-US',
                 'style': 2,
                 'premium': True,
@@ -648,7 +648,7 @@ async def dtmf_input_webhook(request: Request):
                 },
                 'speech': {
                     'language': 'en-US',
-                    'context': ['1', '2', 'yes', 'no'],
+                    'context': ['2', 'two'],
                     'startTimeout': 10,
                     'maxDuration': 5,
                     'endOnSilence': 1.5
@@ -723,7 +723,7 @@ async def event_webhook(request: Request):
         ncco = [
             {
                 'action': 'talk',
-                'text': '<speak>This is a test of Vonage Branded Calling. I will be asking you three questions about your experience with this call. You can speak to me or use your phone keypad to respond.  Say the word "Go" when you are ready.</speak>',
+                'text': '<speak>This is a test of Vonage ASR.  I will be asking you to normally recite the digit 2.  Say the word "Go" when you are ready.</speak>',
                 'language': 'en-US',
                 'style': 2,
                 'premium': True
@@ -892,15 +892,21 @@ def run_test_cycle():
     print("All calls and downloads completed.")
 
 
-if __name__ == "__main__":
-    import uvicorn
+if __name__ == '__main__':
+    # Start background download worker
+    threading.Thread(target=download_worker_enhanced, daemon=True).start()
 
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=3000,
-        log_level="debug"
-    )
+    # Start test cycle in separate thread
+    test_cycle_thread = threading.Thread(target=run_test_cycle)
+    test_cycle_thread.start()
+
+    # Run FastAPI server
+    uvicorn.run(app, host="0.0.0.0", port=5003)
+
+    # Wait for test cycle completion
+    test_cycle_thread.join()
+    print("Script execution complete")
+
 
     # # CORRECT - Pass the function reference without parentheses:
     # threading.Thread(target=download_worker_enhanced, daemon=True).start()

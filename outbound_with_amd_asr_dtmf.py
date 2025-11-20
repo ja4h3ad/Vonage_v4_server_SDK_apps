@@ -221,7 +221,7 @@ def make_call(to_number, max_retries=5, initial_delay=1):
                 advanced_machine_detection={
                     'behavior': 'continue',  # Continue call flow after detection
                     'mode': 'default',
-                    'beep_timeout': 60  # Wait 45 seconds for voicemail beep
+                    'beep_timeout': 90  # Wait 45 seconds for voicemail beep
                 },
                 event_url=[get_webhook_url('event')],
                 event_method='POST'
@@ -647,8 +647,8 @@ def run_test_cycle():
     Execute automated test calling cycle
     Calls all numbers in TEST_LOOP with randomized timing to avoid fraud detection
     """
-    total_calls = len(TEST_LOOP) * 1
-    numbers = TEST_LOOP * 1  # Multiply to repeat test cycles if needed
+    total_calls = len(TEST_LOOP) * 4
+    numbers = TEST_LOOP * 1# Multiply to repeat test cycles if needed
     random.shuffle(numbers)  # Randomize order to prevent fraud detection
 
     for i, number in enumerate(numbers):
@@ -656,7 +656,7 @@ def run_test_cycle():
         make_call(number)
 
         # Random delay between calls to simulate human behavior
-        wait_time = random.randint(70, 90)
+        wait_time = random.randint(240, 300)
         print(f'Waiting for {wait_time} seconds before next call')
         time.sleep(wait_time)
 
