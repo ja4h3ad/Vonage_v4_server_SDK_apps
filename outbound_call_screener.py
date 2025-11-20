@@ -221,7 +221,7 @@ def make_call(to_number, max_retries=5, initial_delay=1):
                 advanced_machine_detection={
                     'behavior': 'continue',  # Continue call flow after detection
                     'mode': 'default',
-                    'beep_timeout': 60  # Wait 45 seconds for voicemail beep
+                    'beep_timeout': 60  # Wait 60 seconds for voicemail beep
                 },
                 event_url=[get_webhook_url('event')],
                 event_method='POST'
@@ -259,7 +259,7 @@ async def event_webhook(request: Request):
 
     # Enhanced debugging - check for any speech-related data
     if any(key in data for key in ['speech', 'asr', 'transcription']):
-        print("🎤 SPEECH/ASR DATA DETECTED IN EVENT WEBHOOK!")
+        print("SPEECH/ASR DATA DETECTED IN EVENT WEBHOOK!")
         print(f"Speech data keys found: {[k for k in data.keys() if 'speech' in k.lower() or 'asr' in k.lower()]}")
 
     # Log all events for debugging
@@ -272,7 +272,7 @@ async def event_webhook(request: Request):
 
     # Special logging for speech events BEFORE status handling
     if 'speech' in data:
-        print('🎤 Capturing ASR/Speech event in EVENT webhook')
+        print('Capturing ASR/Speech event in EVENT webhook')
         speech_file_path = os.path.join(webhooks_dir, f"speech_{conversation_uuid}.json")
         with open(speech_file_path, 'a', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
@@ -371,7 +371,7 @@ async def asr_capture_webhook(request: Request):
     Handle ASR results from initial call capture - runs parallel with AMD
     """
     data = await request.json()
-    print("🎯 ASR capture webhook:", json.dumps(data, indent=2))
+    print("ASR capture webhook:", json.dumps(data, indent=2))
     conversation_uuid = data.get("conversation_uuid", "unknown")
 
     # Log ASR capture events
@@ -389,19 +389,19 @@ async def asr_capture_webhook(request: Request):
         if results and results[0]:
             detected_text = results[0].get('text', '').strip()
             confidence = results[0].get('confidence', 0)
-            print(f"🎯 CAPTURED SPEECH: '{detected_text}' (confidence: {confidence})")
+            print(f"CAPTURED SPEECH: '{detected_text}' (confidence: {confidence})")
 
             # Check for Apple Call Screener patterns
             if "hi if you record your name and reason for calling" in detected_text.lower():
-                print("🎯 DETECTED: Apple Call Screener initial prompt!")
+                print("DETECTED: Apple Call Screener initial prompt!")
             elif "send more information" in detected_text.lower() and "leave a message" in detected_text.lower():
                 print(
-                    "🎯 DETECTED: Apple Call Screener requesting voicemail - 'send more information you can leave a message after the tone'")
+                    "DETECTED: Apple Call Screener requesting voicemail - 'send more information you can leave a message after the tone'")
             elif "thanks" in detected_text.lower() and (
                     "stay" in detected_text.lower() or "line" in detected_text.lower()):
-                print("🎯 DETECTED: Apple Call Screener response - 'Thanks, please stay on the line'")
+                print("DETECTED: Apple Call Screener response - 'Thanks, please stay on the line'")
             else:
-                print(f"🎯 DETECTED: Other speech - {detected_text}")
+                print(f"DETECTED: Other speech - {detected_text}")
 
     # Continue listening - this keeps the ASR active throughout the call
     ncco = [
@@ -483,7 +483,7 @@ async def rtc_events_webhook(request: Request):
             f.write("\n")
         print(f"📞 RTC Event logged to: {file_path}")
     except Exception as e:
-        print(f"❌ Failed to write RTC event: {e}")
+        print(f"Failed to write RTC event: {e}")
 
     return JSONResponse(content={'status': 'success'}, status_code=200)
 
@@ -495,7 +495,7 @@ async def dtmf_input_webhook(request: Request):
     Processes both keypad input and voice commands
     """
     data = await request.json()
-    print("📝 Full input webhook data:", json.dumps(data, indent=2))
+    print("Full input webhook data:", json.dumps(data, indent=2))
 
     conversation_uuid = data.get("conversation_uuid", "unknown")
 
@@ -525,10 +525,10 @@ async def dtmf_input_webhook(request: Request):
     else:
         speech_text = ''
 
-    print(f'📝 Processed input for conversation {conversation_uuid}')
-    print(f'📝 DTMF data: {dtmf_data}')
-    print(f'📝 DTMF digits: {dtmf}')
-    print(f'📝 Speech text: "{speech_text}"')
+    print(f'Processed input for conversation {conversation_uuid}')
+    print(f'DTMF data: {dtmf_data}')
+    print(f'DTMF digits: {dtmf}')
+    print(f'Speech text: "{speech_text}"')
 
     def handle_input(input_value):
         """
@@ -589,7 +589,7 @@ async def dtmf_input_webhook(request: Request):
     if dtmf and isinstance(dtmf_data, dict) and dtmf_data.get('digits'):
         ncco = handle_input(dtmf)
     elif speech_text:
-        print(f"🎤 Processing speech input: '{speech_text}'")
+        print(f"Processing speech input: '{speech_text}'")
         ncco = handle_input(speech_text.lower())
     else:
         ncco = None
@@ -624,7 +624,7 @@ async def dtmf_input_webhook(request: Request):
             }
         ]
 
-    print(f"📝 Returning NCCO: {json.dumps(ncco, indent=2)}")
+    print(f"Returning NCCO: {json.dumps(ncco, indent=2)}")
     return JSONResponse(content=ncco, status_code=200)
 @app.post('/recording')
 async def recording_webhook(request: Request):
